@@ -1,0 +1,58 @@
+# Frame sampling (lower = less CPU, higher stream delay tolerance)
+sample_fps: 1
+
+# Regions as fractions of frame height/width (1080p full desktop, Chrome maximized)
+regions:
+  search_bar:
+    x: 0.30
+    y: 0.08
+    w: 0.40
+    h: 0.06
+  market_row:
+    x: 0.02
+    y: 0.17
+    w: 0.38
+    h: 0.14
+  bet_slip:
+    x: 0.20
+    y: 0.68
+    w: 0.60
+    h: 0.30
+
+# HSV range for bet365 "Place Bet" green (tune with --debug-save-crops)
+place_bet_green_hsv:
+  h_min: 35
+  h_max: 95
+  s_min: 80
+  v_min: 120
+  min_green_pixel_ratio: 0.012
+
+state:
+  slip_stable_frames: 3
+  placing_stable_frames: 1
+  placed_confirm_frames: 1
+  placed_slip_gone_frames: 4
+  likely_slip_gone_frames: 2
+  notify_slip_ready: false
+  notify_bet_placing: true   # Telegram when green spinner / processing (1 stable frame)
+
+ocr:
+  languages: ["eng"]
+  gpu: false
+  scale: 3.0
+  # Skip Tesseract when slip crop looks empty (big speedup on long replays)
+  skip_below_slip_panel: 0.22
+  # Green bar: Bet Placed / stake (higher scale, single pass)
+  action_bar_scale: 3.5
+  # Top fraction of slip crop for fast "Bet Placed" + Bet Ref OCR (~3× faster than full slip)
+  placed_status_fraction: 0.40
+  # Set true to OCR market row on every frame (slower)
+  ocr_market_when_idle: false
+  # Run Tesseract once when post-submit slip UI appears (spinner / Bet Placed); reuse until UI closes
+  once_per_wager: true
+  # Spinner vs Place Bet: ratio drop on green action bar after click (see action_bar_white_on_green)
+  action_bar_spinner_drop_ratio: 0.45
+  # Below this, green bar is spinner/processing — not idle Place Bet (YouTube stream)
+  place_bet_cta_min_wog: 0.022
+  # Mean pixel change on action bar (Place Bet → spinner); ignore slip pop-in animation
+  place_bet_click_motion: 8.0

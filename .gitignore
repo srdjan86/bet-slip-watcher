@@ -1,0 +1,13 @@
+.venv/
+.env
+.cache/
+*cookies*.txt
+secrets/
+audit/
+
+__pycache__/
+*.py[cod]
+.DS_Store
+*.mp4
+*.part
+replay.mp4
