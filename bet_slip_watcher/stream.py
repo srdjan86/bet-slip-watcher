@@ -603,6 +603,56 @@ class ImageFrameSource(FrameSource):
             time.sleep(1.0)
 
 
+class LatestOnlyFrameSource(FrameSource):
+    """
+    Background decode; consumer always analyzes the newest frame.
+    Prevents multi-minute lag when OCR/processing is slower than video fps.
+    """
+
+    def __init__(self, inner: FrameSource) -> None:
+        self._inner = inner
+
+    def frames(self) -> Generator[np.ndarray, None, None]:
+        import threading
+
+        condition = threading.Condition()
+        latest: np.ndarray | None = None
+        error: BaseException | None = None
+        stopped = False
+
+        def produce() -> None:
+            nonlocal latest, error, stopped
+            try:
+                for frame in self._inner.frames():
+                    with condition:
+                        latest = frame
+                        condition.notify_all()
+            except BaseException as exc:
+                with condition:
+                    error = exc
+                    condition.notify_all()
+            finally:
+                with condition:
+                    stopped = True
+                    condition.notify_all()
+
+        threading.Thread(
+            target=produce, daemon=True, name="latest-frame-decode"
+        ).start()
+
+        while True:
+            with condition:
+                while latest is None and error is None and not stopped:
+                    condition.wait(timeout=1.0)
+                if error is not None:
+                    raise error
+                if latest is None:
+                    break
+                frame = latest
+                latest = None
+            yield frame.copy()
+
+
 class ThrottledFrameSource(FrameSource):
     """Emit at most ``target_fps`` frames per second (one inner frame per tick)."""
 

@@ -1,5 +1,8 @@
 # Frame sampling (lower = less CPU, higher stream delay tolerance)
-sample_fps: 1
+# Use 2 on live YouTube so spinner / Bet Placed are not missed between samples
+sample_fps: 2
+# Stay near YouTube live edge — drop decoded frames while OCR is slow
+live_latest_frame: true
 
 # Regions as fractions of frame height/width (1080p full desktop, Chrome maximized)
 regions:
@@ -33,8 +36,21 @@ state:
   placed_confirm_frames: 1
   placed_slip_gone_frames: 4
   likely_slip_gone_frames: 2
+  # Ignore bet_placed / bet_placing Telegram for first N analyzed frames (stale DVR popup)
+  startup_warmup_frames: 8
+  # Full frame + region crops saved when a Telegram notify is sent (set "" to disable)
+  review_screenshots_dir: ./review
+  # Full-frame capture every N seconds while watching (for lag / detection debugging)
+  timeline_screenshots_dir: ./timeline
+  timeline_interval_seconds: 10
   notify_slip_ready: false
   notify_bet_placing: true   # Telegram when green spinner / processing (1 stable frame)
+  # Attach bet_slip region PNG (same as review *_crop-slip.png) to Telegram notify
+  telegram_attach_crop_slip: true
+  # Trim black side margins on *_crop-slip.png + Telegram photo (OCR still uses full region)
+  slip_crop_tighten: true
+  slip_crop_tighten_pad: 12
+  slip_crop_min_col_density: 0.08
 
 ocr:
   languages: ["eng"]
@@ -46,6 +62,8 @@ ocr:
   action_bar_scale: 3.5
   # Top fraction of slip crop for fast "Bet Placed" + Bet Ref OCR (~3× faster than full slip)
   placed_status_fraction: 0.40
+  placed_header_scale: 4.0
+  placed_footer_scale: 4.0
   # Set true to OCR market row on every frame (slower)
   ocr_market_when_idle: false
   # Run Tesseract once when post-submit slip UI appears (spinner / Bet Placed); reuse until UI closes

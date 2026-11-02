@@ -13,7 +13,12 @@ import cv2
 import yaml
 from dotenv import load_dotenv
 
-from bet_slip_watcher.audit_frames import save_audit_frame
+from bet_slip_watcher.audit_frames import (
+    encode_crop_slip_png,
+    save_audit_frame,
+    save_review_capture,
+    save_timeline_snapshot,
+)
 from dataclasses import dataclass, replace
 
 from bet_slip_watcher.detect import (
@@ -22,7 +27,12 @@ from bet_slip_watcher.detect import (
     action_bar_motion_sample,
     action_bar_white_on_green_ratio,
     bet_placed_banner_heuristic,
+    bet_placed_green_header,
     bet_placing_heuristic,
+    bet_settled_history_heuristic,
+    compact_wager_modal_heuristic,
+    fullpage_in_slip_crop_heuristic,
+    my_bets_list_in_slip_heuristic,
     place_bet_cta_visible,
     place_bet_green_ratio,
     place_bet_button_metrics,
@@ -34,6 +44,7 @@ from bet_slip_watcher.notify import Notifier, NotifierConfig
 from bet_slip_watcher.ocr_engine import OcrEngine
 from bet_slip_watcher.parse import (
     merge_reading,
+    ocr_lines_indicate_my_bets_settled,
     ocr_lines_show_place_bet,
     parse_market_row,
     parse_search_query,
@@ -43,6 +54,7 @@ from bet_slip_watcher.regions import RegionSet
 from bet_slip_watcher.state import StateMachine, wager_key
 from bet_slip_watcher.stream import (
     ImageFrameSource,
+    LatestOnlyFrameSource,
     OpenCvFrameSource,
     StreamlinkOptions,
     ThrottledFrameSource,
@@ -113,6 +125,8 @@ def build_frame_source(
     args: argparse.Namespace,
     stream_url: str,
     streamlink_opts: StreamlinkOptions,
+    *,
+    live_latest_frame: bool = True,
 ):
     if args.image:
         inner = ImageFrameSource(Path(args.image))
@@ -145,6 +159,14 @@ def build_frame_source(
                 stream_from=stream_from,
                 rewind_before_live=rewind_before_live,
             )
+            if (
+                live_latest_frame
+                and not inner._dvr_rewind
+            ):
+                inner = LatestOnlyFrameSource(inner)
+                logger.info(
+                    "Live YouTube: analyze newest frame only (avoid decode backlog lag)"
+                )
         else:
             path = Path(source).expanduser()
             is_local_video = (
@@ -171,7 +193,7 @@ def format_event(title: str, reading: BetSlipReading) -> tuple[str, str]:
     headline = {
         "slip_ready": "Bet slip ready (friend about to place?)",
         "bet_placing": "Bet placing on stream",
-        "bet_placed": "Bet placed on stream",
+        "bet_placed": "",
         "bet_likely_placed": "Bet likely placed on stream",
     }.get(title, title)
     body = "\n".join(reading.summary_lines())
@@ -187,6 +209,7 @@ class SlipProbe:
     btn_green: GreenButtonMetrics
     placed_banner: bool
     wager_ui: bool
+    settled_history: bool
     slip_crop: object  # np.ndarray
 
 
@@ -209,6 +232,14 @@ def _finalize_reading(
     *,
     awaiting_place_click: bool,
 ) -> BetSlipReading:
+    if probe.settled_history:
+        return replace(
+            reading,
+            bet_placing_active=False,
+            bet_placed_confirmed=False,
+            place_bet_visible=False,
+            my_bets_history_page=True,
+        )
     if awaiting_place_click:
         return replace(
             reading,
@@ -226,14 +257,30 @@ def probe_slip(frame, regions: RegionSet, hsv_cfg: dict) -> SlipProbe:
     green = place_bet_green_ratio(slip_crop, hsv_cfg)
     btn_green = place_bet_button_metrics(slip_crop, hsv_cfg)
     panel = slip_panel_score(slip_crop)
-    placed_banner = bet_placed_banner_heuristic(slip_crop)
-    wager_ui = wager_outcome_ui_active(panel, green, btn_green, placed_banner)
+    settled_history = (
+        bet_settled_history_heuristic(slip_crop, hsv_cfg, panel=panel)
+        or fullpage_in_slip_crop_heuristic(slip_crop, hsv_cfg, panel=panel)
+        or my_bets_list_in_slip_heuristic(slip_crop, hsv_cfg, panel=panel)
+    )
+    placed_banner = (
+        False
+        if settled_history
+        else bet_placed_banner_heuristic(
+            slip_crop, hsv_cfg, panel=panel, settled_history=settled_history
+        )
+    )
+    wager_ui = (
+        False
+        if settled_history
+        else wager_outcome_ui_active(panel, green, btn_green, placed_banner)
+    )
     return SlipProbe(
         panel=panel,
         green=green,
         btn_green=btn_green,
         placed_banner=placed_banner,
         wager_ui=wager_ui,
+        settled_history=settled_history,
         slip_crop=slip_crop,
     )
 
@@ -242,6 +289,8 @@ def _slip_visible(
     probe: SlipProbe,
     slip: BetSlipReading,
 ) -> bool:
+    if probe.settled_history:
+        return False
     return probe.panel > 0.25 and (
         slip.bet_placed_confirmed
         or slip.bet_placing_active
@@ -251,12 +300,37 @@ def _slip_visible(
     )
 
 
+def _tag_wager_modal(
+    reading: BetSlipReading,
+    probe: SlipProbe,
+    hsv_cfg: dict,
+) -> BetSlipReading:
+    return replace(
+        reading,
+        wager_modal_compact=compact_wager_modal_heuristic(
+            probe.slip_crop,
+            hsv_cfg,
+            panel=probe.panel,
+            settled_history=probe.settled_history,
+        ),
+    )
+
+
 def _apply_probe_to_reading(
     probe: SlipProbe,
     reading: BetSlipReading,
     hsv_cfg: dict,
 ) -> BetSlipReading:
     out = replace(reading, slip_crop_score=probe.panel)
+    out = _tag_wager_modal(out, probe, hsv_cfg)
+    if probe.settled_history:
+        return replace(
+            out,
+            bet_placing_active=False,
+            bet_placed_confirmed=False,
+            place_bet_visible=False,
+            my_bets_history_page=True,
+        )
     if probe.placed_banner:
         out.bet_placed_confirmed = True
         out.bet_placing_active = False
@@ -270,6 +344,7 @@ def _apply_probe_to_reading(
             False,
             out.bet_placed_confirmed,
             out.stake_rsd,
+            settled_history=probe.settled_history,
         )
         if out.bet_placing_active:
             out.place_bet_visible = False
@@ -291,20 +366,42 @@ def ocr_wager_frame(
     green = probe.green
     sh, _sw = slip_crop.shape[:2]
     status_frac = float(opts.get("placed_status_fraction", 0.40))
+    header_scale = float(opts.get("placed_header_scale", 4.0))
     status_lines = ocr.read_lines(slip_crop[: int(sh * status_frac), :])
+    if probe.placed_banner or bet_placed_green_header(slip_crop, hsv_cfg):
+        header_lines = ocr.read_lines(
+            slip_crop[: max(12, int(sh * 0.24)), :],
+            psm=6,
+            scale=header_scale,
+        )
+        status_lines = header_lines + status_lines
     slip_status = parse_slip_text(status_lines, place_bet_visible=False)
 
     search_lines: list[str] = []
     market_lines: list[str] = []
+    search_lines = ocr.read_lines(regions.search_bar.crop(frame))
+    market_lines = ocr.read_lines(regions.market_row.crop(frame))
+    footer_scale = float(opts.get("placed_footer_scale", 4.0))
     if slip_status.bet_placed_confirmed or probe.placed_banner:
         slip_lines = list(status_lines)
-        if not slip_status.bet_ref:
-            slip_lines.extend(
-                ocr.read_lines(slip_crop[int(sh * 0.22) : int(sh * 0.58), :])
+        slip_lines.extend(
+            ocr.read_lines(slip_crop[int(sh * 0.18) : int(sh * 0.58), :])
+        )
+        slip_lines.extend(
+            ocr.read_lines(
+                slip_crop[int(sh * 0.28) : int(sh * 0.48), :],
+                psm=6,
+                scale=footer_scale,
             )
+        )
+        slip_lines.extend(
+            ocr.read_lines(
+                slip_crop[int(sh * 0.58) :, :],
+                psm=6,
+                scale=footer_scale,
+            )
+        )
     else:
-        market_lines = ocr.read_lines(regions.market_row.crop(frame))
-        search_lines = ocr.read_lines(regions.search_bar.crop(frame))
         body_crop = slip_crop[: int(sh * 0.58), :]
         action_crop = slip_crop[int(sh * 0.45) :, :]
         slip_lines = ocr.read_lines(body_crop)
@@ -317,7 +414,15 @@ def ocr_wager_frame(
     slip = parse_slip_text(slip_lines, place_bet_visible=False)
     if slip.bet_placed_confirmed or probe.placed_banner:
         slip.place_bet_visible = False
-        slip.bet_placed_confirmed = True
+        slip.bet_placed_confirmed = probe.placed_banner or (
+            slip.bet_placed_confirmed
+            and compact_wager_modal_heuristic(
+                slip_crop,
+                hsv_cfg,
+                panel=probe.panel,
+                settled_history=probe.settled_history,
+            )
+        )
     elif green.visible and not slip.bet_placed_confirmed:
         slip.place_bet_visible = bool(
             slip.place_bet_visible
@@ -327,16 +432,20 @@ def ocr_wager_frame(
         )
 
     slip.slip_crop_score = probe.panel
-    slip.bet_placing_active = bet_placing_heuristic(
-        slip_crop,
-        hsv_cfg,
-        probe.panel,
-        slip.place_bet_visible,
-        slip.bet_placed_confirmed,
-        slip.stake_rsd,
-    )
-    if slip.place_bet_visible:
+    if slip.bet_placed_confirmed or probe.placed_banner:
         slip.bet_placing_active = False
+    else:
+        slip.bet_placing_active = bet_placing_heuristic(
+            slip_crop,
+            hsv_cfg,
+            probe.panel,
+            slip.place_bet_visible,
+            slip.bet_placed_confirmed,
+            slip.stake_rsd,
+            settled_history=probe.settled_history,
+        )
+        if slip.place_bet_visible:
+            slip.bet_placing_active = False
 
     if not slip.event_name:
         for line in market_lines:
@@ -345,7 +454,15 @@ def ocr_wager_frame(
                 break
 
     reading = merge_reading(search_query, market_pick, slip)
-    return reading
+    history_page = probe.settled_history or ocr_lines_indicate_my_bets_settled(
+        reading.ocr_lines
+    )
+    if history_page:
+        reading.my_bets_history_page = True
+        reading.bet_placing_active = False
+        reading.bet_placed_confirmed = False
+        reading.place_bet_visible = False
+    return _tag_wager_modal(reading, probe, hsv_cfg)
 
 
 def reading_without_ocr(probe: SlipProbe) -> BetSlipReading:
@@ -438,6 +555,14 @@ async def run_watcher(args: argparse.Namespace) -> None:
             ntfy_topic=os.getenv("NTFY_TOPIC", ""),
         )
     )
+    telegram_attach_crop_slip = bool(
+        state_cfg.get("telegram_attach_crop_slip", True)
+    )
+    slip_export = {
+        "tighten": bool(state_cfg.get("slip_crop_tighten", True)),
+        "pad": int(state_cfg.get("slip_crop_tighten_pad", 12)),
+        "min_col_density": float(state_cfg.get("slip_crop_min_col_density", 0.08)),
+    }
     machine = StateMachine(
         slip_stable_frames=int(state_cfg.get("slip_stable_frames", 3)),
         placing_stable_frames=int(state_cfg.get("placing_stable_frames", 1)),
@@ -449,7 +574,10 @@ async def run_watcher(args: argparse.Namespace) -> None:
     )
 
     streamlink_opts = StreamlinkOptions.from_env()
-    source = build_frame_source(args, stream_url, streamlink_opts)
+    live_latest = bool(cfg.get("live_latest_frame", True))
+    source = build_frame_source(
+        args, stream_url, streamlink_opts, live_latest_frame=live_latest
+    )
     debug_dir = Path(args.debug_save_crops) if args.debug_save_crops else None
     if debug_dir:
         debug_dir.mkdir(parents=True, exist_ok=True)
@@ -459,7 +587,53 @@ async def run_watcher(args: argparse.Namespace) -> None:
         audit_dir.mkdir(parents=True, exist_ok=True)
         logger.info("Saving audit frames to %s", audit_dir)
 
-    logger.info("Watching… Ctrl+C to stop")
+    review_dir: Path | None = None
+    if getattr(args, "no_review_screenshots", False):
+        pass
+    elif getattr(args, "review_dir", None) is not None:
+        review_dir = Path(args.review_dir).expanduser()
+    else:
+        env_review = os.getenv("REVIEW_DIR", "").strip()
+        if env_review:
+            review_dir = Path(env_review).expanduser()
+        else:
+            review_cfg = state_cfg.get("review_screenshots_dir", "./review")
+            if review_cfg not in (False, None, ""):
+                review_dir = Path(str(review_cfg)).expanduser()
+    if review_dir:
+        review_dir.mkdir(parents=True, exist_ok=True)
+        logger.info(
+            "Saving review screenshots on each notify to %s",
+            review_dir,
+        )
+
+    timeline_dir: Path | None = None
+    timeline_interval = float(state_cfg.get("timeline_interval_seconds", 10))
+    if getattr(args, "no_timeline_screenshots", False):
+        pass
+    elif getattr(args, "timeline_interval", None) is not None:
+        timeline_interval = float(args.timeline_interval)
+    if not getattr(args, "no_timeline_screenshots", False):
+        if getattr(args, "timeline_dir", None) is not None:
+            timeline_dir = Path(args.timeline_dir).expanduser()
+        else:
+            env_timeline = os.getenv("TIMELINE_DIR", "").strip()
+            if env_timeline:
+                timeline_dir = Path(env_timeline).expanduser()
+            else:
+                timeline_cfg = state_cfg.get("timeline_screenshots_dir", "./timeline")
+                if timeline_cfg not in (False, None, ""):
+                    timeline_dir = Path(str(timeline_cfg)).expanduser()
+    if timeline_dir:
+        timeline_dir.mkdir(parents=True, exist_ok=True)
+        logger.info(
+            "Saving timeline screenshot every %.0fs to %s",
+            timeline_interval,
+            timeline_dir,
+        )
+
+    watch_started = time.monotonic()
+    last_timeline_save = watch_started
     max_frames = int(args.max_frames or 0)
     frames_processed = 0
     latched_reading: BetSlipReading | None = None
@@ -473,8 +647,11 @@ async def run_watcher(args: argparse.Namespace) -> None:
     prev_btn_visible = False
     prev_action_motion_sample = None
     prev_submit_started = False
+    prev_placed_banner = False
     awaiting_place_click = False
     action_bar_wog_peak = 0.0
+    startup_warmup_frames = int(state_cfg.get("startup_warmup_frames", 8))
+    logger.info("Watching… Ctrl+C to stop")
     for idx, frame in enumerate(source.frames()):
         if max_frames and idx >= max_frames:
             break
@@ -490,13 +667,15 @@ async def run_watcher(args: argparse.Namespace) -> None:
             action_bar_wog_peak = 0.0
             prev_action_motion_sample = None
         elif btn_rising and not probe.placed_banner:
+            latched_reading = None
+            machine.clear_outcome_dedupe()
+            machine.begin_wager_cycle()
+            wager_ui_absent_streak = 0
             if wog >= place_bet_cta_min_wog:
                 awaiting_place_click = True
                 action_bar_wog_peak = wog
             else:
                 awaiting_place_click = False
-                latched_reading = None
-                wager_ui_absent_streak = 0
         elif awaiting_place_click and btn_visible:
             action_bar_wog_peak = max(action_bar_wog_peak, wog)
             if not place_bet_cta_visible(
@@ -543,14 +722,35 @@ async def run_watcher(args: argparse.Namespace) -> None:
             session_visible or wager_ui_absent_streak < wager_ui_gone_frames * 12
         )
 
-        ocr_start = latched_reading is None and submit_started and (
-            probe.placed_banner
-            or (submit_started and not prev_submit_started)
+        placed_edge = probe.placed_banner and not prev_placed_banner
+        submit_edge = submit_started and not prev_submit_started
+        if placed_edge:
+            latched_reading = None
+            machine.begin_wager_cycle()
+        elif submit_edge:
+            latched_reading = None
+            machine.begin_wager_cycle()
+
+        if probe.placed_banner:
+            preview = (
+                _apply_probe_to_reading(probe, latched_reading, hsv_cfg)
+                if latched_reading is not None
+                else reading_without_ocr(probe)
+            )
+            if not machine.bet_placed_already_sent(preview):
+                latched_reading = None
+                machine.begin_wager_cycle()
+
+        ocr_start = submit_started and (
+            placed_edge
+            or submit_edge
+            or (latched_reading is None and probe.placed_banner)
         )
 
         if ocr_once_per_wager:
             if ocr_start:
-                machine.begin_wager_cycle()
+                if not (placed_edge or submit_edge):
+                    machine.begin_wager_cycle()
                 slip_visible, reading = analyze_frame(
                     frame,
                     regions,
@@ -574,6 +774,16 @@ async def run_watcher(args: argparse.Namespace) -> None:
                     awaiting_place_click=awaiting_place_click,
                 )
                 if reading.bet_placed_confirmed and not latched_reading.bet_placed_confirmed:
+                    if not wager_key(reading).replace("|", "").strip():
+                        slip_visible, reading = analyze_frame(
+                            frame,
+                            regions,
+                            ocr,
+                            hsv_cfg,
+                            ocr_cfg,
+                            run_ocr=True,
+                            probe=probe,
+                        )
                     latched_reading = reading
             else:
                 slip_visible, reading = analyze_frame(
@@ -600,6 +810,7 @@ async def run_watcher(args: argparse.Namespace) -> None:
 
         prev_btn_visible = btn_visible
         prev_submit_started = submit_started
+        prev_placed_banner = probe.placed_banner
 
         still_in_wager = latched_reading is not None and (
             session_visible or wager_ui_absent_streak < wager_ui_gone_frames * 12
@@ -641,7 +852,44 @@ async def run_watcher(args: argparse.Namespace) -> None:
             if idx == 0 and getattr(args, "rewind", None):
                 logger.info("First audit screenshot saved (rewind playback started)")
 
+        if timeline_dir:
+            now = time.monotonic()
+            if now - last_timeline_save >= timeline_interval:
+                elapsed = now - watch_started
+                shot = save_timeline_snapshot(
+                    timeline_dir,
+                    frame,
+                    idx,
+                    elapsed_s=elapsed,
+                    placed_banner=probe.placed_banner,
+                    bet_placed=reading.bet_placed_confirmed,
+                    bet_placing=reading.bet_placing_active,
+                    awaiting_click=awaiting_place_click,
+                    has_latch=latched_reading is not None,
+                    btn_visible=btn_visible,
+                    submit_started=submit_started,
+                )
+                last_timeline_save = now
+                logger.info(
+                    "Timeline screenshot (t=%.0fs frame=%s): %s",
+                    elapsed,
+                    idx,
+                    shot.name,
+                )
+
         for event_name, snap in events:
+            if idx < startup_warmup_frames and event_name in (
+                "bet_placed",
+                "bet_placing",
+            ):
+                if args.verbose:
+                    logger.info(
+                        "Skipping startup %s (frame %s < warmup %s)",
+                        event_name,
+                        idx,
+                        startup_warmup_frames,
+                    )
+                continue
             if args.verbose:
                 _end_status_line()
             if audit_dir:
@@ -654,13 +902,33 @@ async def run_watcher(args: argparse.Namespace) -> None:
                     prefix=f"NOTIFY-{event_name}",
                 )
             title, body = format_event(event_name, snap)
+            if review_dir:
+                shot = save_review_capture(
+                    review_dir,
+                    frame,
+                    idx,
+                    snap,
+                    event_name=event_name,
+                    regions=regions,
+                    tighten_slip=slip_export["tighten"],
+                    tighten_pad=slip_export["pad"],
+                    tighten_min_col=slip_export["min_col_density"],
+                )
+                logger.info(
+                    "Review screenshot (notify %s): %s",
+                    event_name,
+                    shot.name,
+                )
             logger.info(
                 "Notify %s (total %s) key=%s",
                 event_name,
                 machine.notifications_sent,
                 wager_key(snap)[:80],
             )
-            await notifier.send(title, body)
+            photo: bytes | None = None
+            if telegram_attach_crop_slip:
+                photo = encode_crop_slip_png(frame, regions, **slip_export)
+            await notifier.send(title, body, photo_png=photo)
 
     if args.verbose:
         _end_status_line()
@@ -712,6 +980,32 @@ def main() -> None:
         "--audit-dir",
         metavar="DIR",
         help="Save every analyzed frame with detection labels in the filename (for manual review)",
+    )
+    parser.add_argument(
+        "--review-dir",
+        metavar="DIR",
+        help="Folder for bet-placed / OCR-empty screenshots (default: config review_screenshots_dir)",
+    )
+    parser.add_argument(
+        "--no-review-screenshots",
+        action="store_true",
+        help="Do not save review screenshots on bet placed or empty OCR",
+    )
+    parser.add_argument(
+        "--timeline-dir",
+        metavar="DIR",
+        help="Folder for periodic timeline screenshots (default: config timeline_screenshots_dir)",
+    )
+    parser.add_argument(
+        "--timeline-interval",
+        type=float,
+        metavar="SEC",
+        help="Seconds between timeline screenshots (default: config timeline_interval_seconds)",
+    )
+    parser.add_argument(
+        "--no-timeline-screenshots",
+        action="store_true",
+        help="Do not save periodic timeline screenshots",
     )
     args = parser.parse_args()
     if args.fps is None:

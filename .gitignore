@@ -4,6 +4,8 @@
 *cookies*.txt
 secrets/
 audit/
+review/
+timeline/
 
 __pycache__/
 *.py[cod]

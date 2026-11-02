@@ -19,12 +19,36 @@ class Notifier:
     def __init__(self, cfg: NotifierConfig) -> None:
         self._cfg = cfg
 
-    async def send(self, title: str, body: str) -> None:
-        logger.info("%s\n%s", title, body)
+    async def send(
+        self,
+        title: str,
+        body: str,
+        *,
+        photo_png: bytes | None = None,
+    ) -> None:
+        if title.strip():
+            logger.info("%s\n%s", title, body)
+        else:
+            logger.info("%s", body)
         if self._cfg.telegram_bot_token and self._cfg.telegram_chat_id:
-            await self._telegram(f"{title}\n\n{body}")
+            caption = body if not title.strip() else f"{title}\n\n{body}"
+            if photo_png:
+                await self._telegram_photo(photo_png, caption=caption)
+            else:
+                await self._telegram(caption)
         if self._cfg.ntfy_topic:
-            await self._ntfy(title, body)
+            await self._ntfy(title.strip() or "Bet slip", body)
+
+    async def _telegram_photo(self, png: bytes, *, caption: str) -> None:
+        url = f"https://api.telegram.org/bot{self._cfg.telegram_bot_token}/sendPhoto"
+        cap = caption[:1024]
+        async with httpx.AsyncClient(timeout=60.0) as client:
+            resp = await client.post(
+                url,
+                data={"chat_id": self._cfg.telegram_chat_id, "caption": cap},
+                files={"photo": ("crop-slip.png", png, "image/png")},
+            )
+            resp.raise_for_status()
 
     async def _telegram(self, text: str) -> None:
         url = f"https://api.telegram.org/bot{self._cfg.telegram_bot_token}/sendMessage"

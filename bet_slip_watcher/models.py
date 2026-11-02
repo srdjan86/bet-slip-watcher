@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass, field
 from enum import Enum
 from typing import Optional
@@ -36,29 +37,39 @@ class BetSlipReading:
     bet_placing_active: bool = False
     bet_ref: Optional[str] = None
     slip_crop_score: float = 0.0
+    my_bets_history_page: bool = False
+    wager_modal_compact: bool = False
     ocr_lines: list[str] = field(default_factory=list)
+
+    def _pick_line_for_notify(self) -> str | None:
+        mp = self.market_pick
+        if mp is None:
+            return None
+        if mp.side and mp.line:
+            return f"{mp.side} ({mp.line})"
+        if mp.side:
+            return mp.side
+        if mp.raw:
+            return re.sub(r"\s*\d\.\d{2}\s*$", "", mp.raw.strip())
+        return None
+
+    def _selection_for_notify(self) -> str | None:
+        if not self.selection_title:
+            return None
+        return re.sub(r"\s+\d\.\d{2}\s*$", "", self.selection_title.strip())
 
     def summary_lines(self) -> list[str]:
         lines: list[str] = []
         if self.search_query:
-            lines.append(f"Search: {self.search_query}")
-        if self.market_pick and self.market_pick.raw:
-            lines.append(f"Clicked row: {self.market_pick.raw}")
-        elif self.market_pick and self.market_pick.side:
-            mp = self.market_pick
-            lines.append(f"Clicked: {mp.side} ({mp.line}) @ {mp.odds}")
-        if self.selection_title:
-            lines.append(f"Selection: {self.selection_title}")
+            lines.append(f"🔍 {self.search_query}")
+        if self.event_name:
+            lines.append(f"🏀 {self.event_name}")
+        pick = self._pick_line_for_notify()
+        if pick:
+            lines.append(f"🖱️ {pick}")
+        selection = self._selection_for_notify()
+        if selection:
+            lines.append(f"💵 {selection}")
         if self.market_type:
             lines.append(f"Market: {self.market_type}")
-        if self.event_name:
-            lines.append(f"Event: {self.event_name}")
-        if self.odds:
-            lines.append(f"Odds: {self.odds}")
-        if self.stake_rsd is not None:
-            lines.append(f"Stake: RSD {self.stake_rsd:,.2f}")
-        if self.to_return_rsd is not None:
-            lines.append(f"To return: RSD {self.to_return_rsd:,.2f}")
-        if self.bet_ref:
-            lines.append(f"Bet ref: {self.bet_ref}")
         return lines
