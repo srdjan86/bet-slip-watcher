@@ -41,7 +41,8 @@ state:
   # Full frame + region crops saved when a Telegram notify is sent (set "" to disable)
   review_screenshots_dir: ./review
   # Full-frame capture every N seconds while watching (for lag / detection debugging)
-  timeline_screenshots_dir: ./timeline
+  # Periodic full-frame debug captures (set "" to disable)
+  timeline_screenshots_dir: ""
   timeline_interval_seconds: 10
   notify_slip_ready: false
   notify_bet_placing: true   # Telegram when green spinner / processing (1 stable frame)

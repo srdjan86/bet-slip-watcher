@@ -82,7 +82,6 @@ class _VerboseStatus:
             "yes",
         )
         self._stream = None if plain else (sys.stdout if sys.stdout.isatty() else None)
-        self._last_log_at = 0.0
 
     def update(self, message: str) -> None:
         if self._stream is not None:
@@ -94,10 +93,7 @@ class _VerboseStatus:
             self._stream.write(_CLEAR_LINE + message + " " * pad)
             self._stream.flush()
             return
-        now = time.monotonic()
-        if now - self._last_log_at >= 2.0:
-            logger.info("%s", message)
-            self._last_log_at = now
+        # Non-TTY (piped logs): skip per-frame status spam; startup line is enough.
 
     def finish(self) -> None:
         if self._stream is not None:
@@ -827,20 +823,7 @@ async def run_watcher(args: argparse.Namespace) -> None:
         )
 
         if args.verbose:
-            _status_line(
-                "frame=%s slip=%s placing=%s placed=%s sent=%s search=%s pick=%s stake=%s ref=%s"
-                % (
-                    idx,
-                    slip_visible,
-                    reading.bet_placing_active,
-                    reading.bet_placed_confirmed,
-                    machine.notifications_sent,
-                    reading.search_query,
-                    market_raw,
-                    reading.stake_rsd,
-                    reading.bet_ref,
-                )
-            )
+            _status_line("Running…")
 
         if debug_dir and idx < 5:
             cv2.imwrite(str(debug_dir / f"search_{idx}.png"), regions.search_bar.crop(frame))
