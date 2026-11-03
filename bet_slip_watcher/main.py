@@ -56,6 +56,7 @@ from bet_slip_watcher.stream import (
     ImageFrameSource,
     LatestOnlyFrameSource,
     OpenCvFrameSource,
+    YtdlpAuth,
     StreamlinkOptions,
     ThrottledFrameSource,
     YtdlpPipeFrameSource,
@@ -129,7 +130,7 @@ def build_frame_source(
     elif args.stream or stream_url:
         source = args.stream or stream_url
         if "youtube" in source or "youtu.be" in source:
-            cookie_path = streamlink_opts.cookie_path()
+            ytdlp_auth = YtdlpAuth.from_env()
             stream_from = (getattr(args, "stream_from", None) or "").strip() or None
             rewind_before_live = None
             rewind_label = (getattr(args, "rewind", None) or "").strip()
@@ -145,13 +146,18 @@ def build_frame_source(
                     "Opening YouTube from %s (DVR rewind via yt-dlp)…",
                     stream_from,
                 )
-            elif cookie_path:
+            elif ytdlp_auth.cookies_from_browser:
+                logger.info(
+                    "Opening YouTube via yt-dlp → ffmpeg (browser profile %s)…",
+                    ytdlp_auth.cookies_from_browser,
+                )
+            elif ytdlp_auth.cookie_file:
                 logger.info("Opening YouTube via yt-dlp → ffmpeg (cookies file)…")
             else:
                 logger.info("Opening YouTube via yt-dlp → ffmpeg…")
             inner = YtdlpPipeFrameSource(
                 source,
-                cookie_path,
+                auth=ytdlp_auth if ytdlp_auth.configured() else None,
                 stream_from=stream_from,
                 rewind_before_live=rewind_before_live,
             )

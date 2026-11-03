@@ -17,6 +17,45 @@ logger = logging.getLogger(__name__)
 
 
 @dataclass(frozen=True)
+class YtdlpAuth:
+    """
+    YouTube auth for yt-dlp.
+
+    Prefer ``YTDLP_COOKIES_FROM_BROWSER`` on Mac (dedicated Chrome profile) so
+    cookies refresh from the browser DB — no manual cookies.txt export.
+    """
+
+    cookie_file: Path | None = None
+    cookies_from_browser: str | None = None
+
+    @classmethod
+    def from_env(cls) -> YtdlpAuth:
+        browser = os.getenv("YTDLP_COOKIES_FROM_BROWSER", "").strip()
+        if browser:
+            return cls(cookies_from_browser=browser)
+        raw = os.getenv("STREAMLINK_HTTP_COOKIE_FILE", "").strip()
+        if not raw:
+            return cls()
+        path = Path(raw).expanduser()
+        if not path.is_file():
+            raise RuntimeError(
+                f"STREAMLINK_HTTP_COOKIE_FILE not found: {path} "
+                "(or set YTDLP_COOKIES_FROM_BROWSER — see README)"
+            )
+        return cls(cookie_file=path)
+
+    def configured(self) -> bool:
+        return bool(self.cookies_from_browser or self.cookie_file)
+
+    def ytdlp_args(self) -> list[str]:
+        if self.cookies_from_browser:
+            return ["--cookies-from-browser", self.cookies_from_browser]
+        if self.cookie_file:
+            return ["--cookies", str(self.cookie_file)]
+        return []
+
+
+@dataclass(frozen=True)
 class StreamlinkOptions:
     """Auth for private/restricted streams via streamlink's --http-cookies-file (v8+)."""
 
@@ -29,8 +68,11 @@ class StreamlinkOptions:
         )
 
     def cookie_path(self) -> Path | None:
-        if not self.http_cookie_file:
+        auth = YtdlpAuth.from_env()
+        if auth.cookies_from_browser:
             return None
+        if not self.http_cookie_file:
+            return auth.cookie_file
         path = Path(self.http_cookie_file).expanduser()
         if not path.is_file():
             raise RuntimeError(
@@ -101,11 +143,11 @@ def parse_rewind_duration(value: str) -> int:
 
 def seek_before_live(
     youtube_url: str,
-    cookie_file: Path | None,
+    auth: YtdlpAuth | None,
     before_live_seconds: int,
 ) -> tuple[int, str]:
     """Map “N seconds before live edge” to YouTube DVR scrub-bar seconds."""
-    release = fetch_youtube_release_timestamp(youtube_url, cookie_file)
+    release = fetch_youtube_release_timestamp(youtube_url, auth)
     if release is None:
         raise RuntimeError(
             "Could not read when the live stream started (yt-dlp release_timestamp). "
@@ -137,7 +179,7 @@ def dvr_section_spec(
     rewind_before_live: int | None = None,
     stream_from: str | None = None,
     youtube_url: str,
-    cookie_file: Path | None,
+    auth: YtdlpAuth | None,
 ) -> tuple[str, str]:
     """
     Build yt-dlp --download-sections value and a log label.
@@ -184,7 +226,7 @@ def _pick_playback_url(stdout: str) -> str:
 
 def fetch_youtube_release_timestamp(
     youtube_url: str,
-    cookie_file: Path | None,
+    auth: YtdlpAuth | None,
 ) -> int | None:
     cmd = [
         "yt-dlp",
@@ -193,8 +235,8 @@ def fetch_youtube_release_timestamp(
         "--print",
         "release_timestamp",
     ]
-    if cookie_file:
-        cmd.extend(["--cookies", str(cookie_file)])
+    if auth:
+        cmd.extend(auth.ytdlp_args())
     cmd.append(youtube_url)
     proc = subprocess.run(cmd, capture_output=True, text=True, timeout=120)
     if proc.returncode != 0:
@@ -206,7 +248,7 @@ def fetch_youtube_release_timestamp(
 def resolve_stream_from_seconds(
     stream_from: str,
     youtube_url: str,
-    cookie_file: Path | None,
+    auth: YtdlpAuth | None,
 ) -> tuple[int, str]:
     """
     Return (seek_seconds, log_label).
@@ -217,7 +259,7 @@ def resolve_stream_from_seconds(
     raw = stream_from.strip()
     if raw.startswith("#-"):
         before_live = parse_stream_timestamp(raw[2:])
-        release = fetch_youtube_release_timestamp(youtube_url, cookie_file)
+        release = fetch_youtube_release_timestamp(youtube_url, auth)
         if release is None:
             raise RuntimeError(
                 "Could not read stream start time for #-relative rewind. "
@@ -242,7 +284,7 @@ def resolve_stream_from_seconds(
 
 def resolve_youtube_stream_url_ytdlp(
     youtube_url: str,
-    cookie_file: Path,
+    auth: YtdlpAuth,
     *,
     live_from_start: bool = False,
 ) -> str:
@@ -251,9 +293,8 @@ def resolve_youtube_stream_url_ytdlp(
         "yt-dlp",
         "-g",
         "--no-warnings",
-        "--cookies",
-        str(cookie_file),
     ]
+    cmd.extend(auth.ytdlp_args())
     if live_from_start:
         cmd.append("--live-from-start")
     cmd.append(youtube_url)
@@ -269,10 +310,15 @@ def resolve_stream_url(
     options: StreamlinkOptions | None = None,
 ) -> str:
     """Resolve a YouTube URL to a direct HLS/HTTP URL (yt-dlp if cookies, else streamlink)."""
+    auth = YtdlpAuth.from_env()
+    if auth.configured():
+        return resolve_youtube_stream_url_ytdlp(youtube_url, auth)
     opts = options or StreamlinkOptions()
     cookie_path = opts.cookie_path()
     if cookie_path is not None:
-        return resolve_youtube_stream_url_ytdlp(youtube_url, cookie_path)
+        return resolve_youtube_stream_url_ytdlp(
+            youtube_url, YtdlpAuth(cookie_file=cookie_path)
+        )
 
     cmd = ["streamlink", "--stream-url", youtube_url, "best"]
     proc = subprocess.run(
@@ -370,18 +416,18 @@ class YtdlpPipeFrameSource(FrameSource):
     def __init__(
         self,
         youtube_url: str,
-        cookie_file: Path | None = None,
+        auth: YtdlpAuth | None = None,
         stream_from: str | None = None,
         rewind_before_live: int | None = None,
     ) -> None:
-        self._cookie_file = cookie_file
+        self._auth = auth
         self._youtube_url = youtube_url
         self._stream_from = (stream_from or "").strip() or None
         self._section_spec: str | None = None
         self._dvr_rewind = False
         label = ""
         if rewind_before_live is not None:
-            release = fetch_youtube_release_timestamp(youtube_url, cookie_file)
+            release = fetch_youtube_release_timestamp(youtube_url, auth)
             if release is not None:
                 elapsed = max(0, int(time.time()) - release)
                 if rewind_before_live > elapsed:
@@ -393,7 +439,7 @@ class YtdlpPipeFrameSource(FrameSource):
                 rewind_before_live=rewind_before_live,
                 stream_from=None,
                 youtube_url=youtube_url,
-                cookie_file=cookie_file,
+                auth=auth,
             )
             self._dvr_rewind = True
         elif self._stream_from:
@@ -401,7 +447,7 @@ class YtdlpPipeFrameSource(FrameSource):
                 rewind_before_live=None,
                 stream_from=self._stream_from,
                 youtube_url=youtube_url,
-                cookie_file=cookie_file,
+                auth=auth,
             )
             self._dvr_rewind = True
         if self._dvr_rewind:
@@ -436,8 +482,8 @@ class YtdlpPipeFrameSource(FrameSource):
             )
         else:
             cmd.append("--quiet")
-        if self._cookie_file:
-            cmd.extend(["--cookies", str(self._cookie_file)])
+        if self._auth:
+            cmd.extend(self._auth.ytdlp_args())
         cmd.append(self._youtube_url)
         return cmd
 

@@ -18,7 +18,7 @@ pip install -r requirements.txt
 # streamlink + Tesseract for OCR
 brew install streamlink tesseract yt-dlp ffmpeg   # macOS
 cp .env.example .env
-# edit .env — STREAM_URL, private-stream cookies (below), optional TELEGRAM_* or NTFY_TOPIC
+# edit .env — STREAM_URL, Firefox cookies (below), optional TELEGRAM_* or NTFY_TOPIC
 ```
 
 Use **Python 3.11–3.12** if EasyOCR is added later; this sketch uses **Tesseract** via `pytesseract`.
@@ -80,32 +80,53 @@ Telegram sends also get extra `NOTIFY-bet_placing_…` copies in the same folder
 
 ### Private YouTube (invite-only viewers)
 
-The watcher does **not** log into Google. **Streamlink 8** has no `--cookies-from-browser` flag (and tools that read your whole Chrome profile are optional—you can skip them).
+The watcher uses **yt-dlp** with your Google session. On a **Mac**, use a **dedicated Firefox profile** for the stream account only (separate from your daily Chrome/Safari).
 
-Use a **YouTube-only** Netscape `cookies.txt` file instead:
+#### Recommended: Firefox “Stream” profile + live cookies (no export)
 
-1. Log into the Google account that can watch the stream and open the live page in Chrome.
-2. Export cookies **for this site only** (not your entire browser):
-   - Install [Get cookies.txt LOCALLY](https://chromewebstore.google.com/detail/get-cookiestxt-locally/cclelndahbckbenkjhflpdbgdldlbecc) (or similar).
-   - On `youtube.com` (or the live watch page), use the extension → export → save e.g. `secrets/youtube_cookies.txt`.
-   - The file should only contain lines for `.youtube.com` / `.google.com` — keep it out of git (see `.gitignore`).
-3. In `.env`:
+1. Install **Firefox** (only for this if you like — keeps stream login isolated from Chrome).
+2. **Firefox → `about:profiles` → Create profile** (e.g. name **Stream**). Launch that profile and sign in with the Google account that can watch the live stream. Open the live URL once and confirm it plays.
+3. Note the profile **folder name** (not the display name). On the profiles page, **Root Directory** ends with something like:
 
-   ```bash
-   STREAM_URL=https://youtu.be/YOUR_PRIVATE_LINK
-   STREAMLINK_HTTP_COOKIE_FILE=/Users/you/bet-slip-watcher/secrets/youtube_cookies.txt
-   ```
+   `…/Firefox/Profiles/skqlrte6.Stream`
 
-4. Test with **yt-dlp** (private streams usually fail with streamlink even when cookies are valid):
+   yt-dlp needs the last segment: **`skqlrte6.Stream`** (yours will differ).
+
+   Or in Terminal:
 
    ```bash
-   yt-dlp --simulate --cookies secrets/youtube_cookies.txt \
-     'https://youtu.be/YOUR_PRIVATE_LINK'
+   grep -E '^(Name|Path)=' ~/Library/Application\ Support/Firefox/profiles.ini
    ```
 
-   When that succeeds, run `python -m bet_slip_watcher.main --verbose` (the app uses yt-dlp + your cookies file to resolve the HLS URL).
+4. In `.env`:
 
-Cookies expire; re-export from YouTube when playback stops working.
+   ```bash
+   STREAM_URL=https://www.youtube.com/watch?v=YOUR_VIDEO_ID
+   YTDLP_COOKIES_FROM_BROWSER="firefox:skqlrte6.Stream"
+   ```
+
+   Replace with **your** folder name (case-sensitive).
+
+5. Test:
+
+   ```bash
+   yt-dlp --simulate --cookies-from-browser "firefox:skqlrte6.Stream" \
+     'https://www.youtube.com/watch?v=YOUR_VIDEO_ID'
+   ```
+
+   Expect `Extracted … cookies from firefox` and `[info] … Downloading 1 format(s): …` — not `Video unavailable`.
+
+6. Run the watcher. yt-dlp reads **that profile’s** cookie DB on each connect/reconnect — no manual `cookies.txt`, and **no cookies from other browsers or Firefox profiles**.
+
+Keep the stream profile logged in on YouTube. Quit Firefox if cookie read fails once, then retry.
+
+#### Alternative: dedicated Chrome profile
+
+Same idea with `YTDLP_COOKIES_FROM_BROWSER="chrome:Profile 3"` (folder name from `chrome://version` → Profile Path). Use a Chrome profile that is **not** your main daily profile.
+
+#### Fallback: manual `cookies.txt` export
+
+Export YouTube-only cookies on the watch page to `secrets/youtube_cookies.txt` and set `STREAMLINK_HTTP_COOKIE_FILE=…` in `.env`. Re-export when playback fails.
 
 Notifications:
 
