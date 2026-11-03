@@ -128,12 +128,12 @@ Same idea with `YTDLP_COOKIES_FROM_BROWSER="chrome:Profile 3"` (folder name from
 
 Export YouTube-only cookies on the watch page to `secrets/youtube_cookies.txt` and set `STREAMLINK_HTTP_COOKIE_FILE=…` in `.env`. Re-export when playback fails.
 
-Notifications:
+Notifications (Telegram / ntfy) are sent **only** for these two states:
 
-- **slip_ready** — stake filled, Place Bet visible (off by default; `notify_slip_ready: true` in config.yaml)
-- **bet_placing** — first frame with spinner (fastest alert)
-- **bet_placed** — if placing was missed, **Bet Placed** on the **next frame** (same wager still only one message)
-- **bet_likely_placed** — last resort if both OCR steps miss but the slip vanishes after a wager was tracked
+- **bet_placing** — compact slip, green action bar, white spinner (after Place Bet, not while the button still says Place Bet)
+- **bet_placed** — green **Bet Placed** header and/or **Bet Ref**, or the post-submit stake / to-return footer (no Place Bet bar)
+
+Everything else (open slip with Place Bet, homepage, My Bets, etc.) is ignored. Optional **slip_ready** and **bet_likely_placed** stay off in `config.yaml`.
 
 ## Telegram
 

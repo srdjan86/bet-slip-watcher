@@ -181,26 +181,21 @@ _OUTCOME_EVENTS = ("bet_placing", "bet_placed", "bet_likely_placed")
 
 
 def worth_outcome_notify(reading: BetSlipReading) -> bool:
-    """Skip Telegram when OCR did not capture a real wager (search UI, false banner)."""
+    """Only real bet submitting or Bet Placed modals — not search UI or open slip."""
     if reading.my_bets_history_page:
         return False
-    if reading.bet_placing_active or reading.bet_placed_confirmed:
-        if not reading.wager_modal_compact and not reading.bet_ref:
+    if reading.place_bet_visible:
+        return False
+    if reading.bet_placing_active:
+        return bool(reading.wager_modal_compact)
+    if reading.bet_placed_confirmed:
+        if reading.place_bet_visible:
             return False
-    if reading.bet_ref:
-        return True
-    odds = reading.odds or (
-        reading.market_pick.odds if reading.market_pick else ""
-    )
-    if reading.market_pick and reading.market_pick.line and odds:
-        return True
-    if reading.market_pick and reading.market_pick.raw and odds:
-        return True
-    sel = _norm(reading.selection_title)
-    if len(sel) > 6 and odds:
-        return True
-    if sel and reading.stake_rsd is not None and reading.stake_rsd >= 100:
-        return True
+        if reading.bet_ref:
+            return True
+        if reading.bet_placing_active:
+            return False
+        return bool(reading.wager_modal_compact)
     return False
 
 
@@ -213,6 +208,7 @@ class StateMachine:
     likely_slip_gone_frames: int = 2
     notify_slip_ready: bool = False
     notify_bet_placing: bool = True
+    notify_bet_likely_placed: bool = False
 
     phase: WatcherPhase = WatcherPhase.IDLE
     stable_count: int = 0
@@ -400,6 +396,12 @@ class StateMachine:
 
         snap = self._merge_wager_context(reading)
 
+        if reading.place_bet_visible:
+            self.placed_confirm_count = 0
+            self.placing_count = 0
+            self._ui_cleared(reading, slip_visible)
+            return out
+
         if reading.bet_placed_confirmed:
             self.placing_count = 0
             self.placed_confirm_count += 1
@@ -460,7 +462,11 @@ class StateMachine:
                     if self.phase == WatcherPhase.AWAITING_CONFIRM or self.last_wager_reading
                     else self.placed_slip_gone_frames
                 )
-                if fallback is not None and self.gone_count >= gone_need:
+                if (
+                    fallback is not None
+                    and self.notify_bet_likely_placed
+                    and self.gone_count >= gone_need
+                ):
                     self._notify_outcome_once("bet_likely_placed", fallback, fallback, out)
                     self.phase = WatcherPhase.IDLE
                     self.last_ready_reading = None

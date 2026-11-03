@@ -45,7 +45,8 @@ state:
   timeline_screenshots_dir: ""
   timeline_interval_seconds: 10
   notify_slip_ready: false
-  notify_bet_placing: true   # Telegram when green spinner / processing (1 stable frame)
+  notify_bet_placing: true
+  notify_bet_likely_placed: false
   # Attach bet_slip region PNG (same as review *_crop-slip.png) to Telegram notify
   telegram_attach_crop_slip: true
   # Trim black side margins on *_crop-slip.png + Telegram photo (OCR still uses full region)

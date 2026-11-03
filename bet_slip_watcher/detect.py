@@ -115,21 +115,14 @@ def bet_placing_heuristic(
         hsv_cfg,
         panel=panel,
         settled_history=settled_history,
-        place_bet_visible=False,
+        place_bet_visible=place_bet_visible,
     ):
         return True
-    if panel < 0.45:
-        return False
-    if not compact_wager_modal_heuristic(
+    if place_bet_modal_idle(
         slip_bgr, hsv_cfg, panel=panel, settled_history=settled_history
     ):
         return False
-    btn = place_bet_button_metrics(slip_bgr, hsv_cfg)
-    if not btn.visible:
-        return False
-    if stake_rsd is not None and stake_rsd > 0:
-        return True
-    return True
+    return False
 
 
 def slip_ui_busy(
@@ -176,17 +169,67 @@ def wager_outcome_ui_active(
     return green.visible or btn.visible
 
 
-def bet_placed_green_header(slip_bgr: np.ndarray, hsv_cfg: dict) -> bool:
-    """Green title bar with checkmark (Bet Placed header on bet365)."""
-    if slip_bgr.size == 0:
-        return False
+def _bet_placed_header_green_mask(slip_bgr: np.ndarray, hsv_cfg: dict) -> np.ndarray:
     h, w = slip_bgr.shape[:2]
     top = slip_bgr[: max(8, int(h * 0.18)), int(w * 0.02) : int(w * 0.98)]
     hsv = cv2.cvtColor(top, cv2.COLOR_BGR2HSV)
     lo = (int(hsv_cfg["h_min"]), max(40, int(hsv_cfg["s_min"]) // 2), int(hsv_cfg["v_min"]))
     hi = (int(hsv_cfg["h_max"]), 255, 255)
-    mask = cv2.inRange(hsv, np.array(lo), np.array(hi))
-    return float(np.mean(mask)) / 255.0 >= 0.045
+    return cv2.inRange(hsv, np.array(lo), np.array(hi))
+
+
+def bet_placed_green_header(slip_bgr: np.ndarray, hsv_cfg: dict) -> bool:
+    """
+    Green title bar with checkmark (Bet Placed header on bet365).
+    Not green selection text on the white card (narrow green strokes, low row fill).
+    """
+    if slip_bgr.size == 0:
+        return False
+    mask = _bet_placed_header_green_mask(slip_bgr, hsv_cfg)
+    if mask.size == 0:
+        return False
+    h = slip_bgr.shape[0]
+    top_gray = cv2.cvtColor(
+        slip_bgr[: max(8, int(h * 0.18)), :], cv2.COLOR_BGR2GRAY
+    )
+    light_top = float(np.mean(top_gray > 110))
+    if light_top > 0.25:
+        return False
+    row_max = max(float(np.mean(mask[r, :])) / 255.0 for r in range(mask.shape[0]))
+    mean_green = float(np.mean(mask)) / 255.0
+    if row_max >= 0.28:
+        return True
+    if mean_green >= 0.12 and row_max >= 0.15:
+        return True
+    return False
+
+
+def place_bet_modal_idle(
+    slip_bgr: np.ndarray,
+    hsv_cfg: dict,
+    *,
+    panel: float,
+    settled_history: bool = False,
+) -> bool:
+    """
+    Compact slip with stake + green Place Bet bar — user has not submitted yet.
+    """
+    if settled_history or slip_bgr.size == 0:
+        return False
+    if bet_placed_green_header(slip_bgr, hsv_cfg):
+        return False
+    if panel < 0.28 or panel > 0.93:
+        return False
+    if wager_modal_light_body_ratio(slip_bgr) < 0.10:
+        return False
+    btn = place_bet_button_metrics(slip_bgr, hsv_cfg)
+    if not btn.visible:
+        return False
+    wog = action_bar_white_on_green_ratio(slip_bgr, hsv_cfg)
+    # "Place Bet" label (dark text on green) — not the thin white spinner arc.
+    if wog >= 0.022:
+        return True
+    return False
 
 
 def wager_modal_light_body_ratio(slip_bgr: np.ndarray) -> float:
@@ -211,7 +254,9 @@ def compact_wager_modal_heuristic(
     """
     if settled_history or slip_bgr.size == 0:
         return False
-    if panel < 0.28 or panel > 0.93:
+    body = wager_modal_light_body_ratio(slip_bgr)
+    min_panel = 0.15 if body >= 0.35 else 0.28
+    if panel < min_panel or panel > 0.93:
         return False
     if bet_placed_green_header(slip_bgr, hsv_cfg):
         return True
@@ -264,6 +309,163 @@ def bet_placed_banner_heuristic(
     return dark >= 0.50 and bright >= 0.006
 
 
+def wager_pick_visible_in_slip(slip_bgr: np.ndarray, hsv_cfg: dict) -> bool:
+    """Green selection / dark market text on the bet card — not refer-a-friend promos."""
+    if slip_bgr.size == 0:
+        return False
+    h, w = slip_bgr.shape[:2]
+    band = slip_bgr[int(h * 0.10) : int(h * 0.48), int(w * 0.04) : int(w * 0.96)]
+    if band.size == 0:
+        return False
+    hsv = cv2.cvtColor(band, cv2.COLOR_BGR2HSV)
+    lo = (
+        int(hsv_cfg["h_min"]),
+        max(40, int(hsv_cfg["s_min"]) // 2),
+        int(hsv_cfg["v_min"]),
+    )
+    hi = (int(hsv_cfg["h_max"]), 255, 255)
+    mask = cv2.inRange(hsv, np.array(lo), np.array(hi))
+    green = float(np.mean(mask)) / 255.0
+    gray = cv2.cvtColor(band, cv2.COLOR_BGR2GRAY)
+    dark = float(np.mean(gray < 85))
+    # Refer-a-friend / promo: dense body text, no green selection line.
+    if dark >= 0.28 and green < 0.006:
+        return False
+    if green >= 0.008:
+        return True
+    if 0.008 <= dark <= 0.14:
+        return True
+    return False
+
+
+def non_wager_popup_in_slip(
+    slip_bgr: np.ndarray,
+    hsv_cfg: dict,
+    *,
+    panel: float,
+) -> bool:
+    """Promo / refer-a-friend / non-wager dialogs in the slip crop."""
+    if slip_bgr.size == 0:
+        return False
+    if centered_promo_popup_in_slip(slip_bgr, hsv_cfg, panel=panel):
+        return True
+    h, w = slip_bgr.shape[:2]
+    band = slip_bgr[int(h * 0.08) : int(h * 0.50), int(w * 0.04) : int(w * 0.96)]
+    if band.size == 0:
+        return False
+    hsv = cv2.cvtColor(band, cv2.COLOR_BGR2HSV)
+    lo = (
+        int(hsv_cfg["h_min"]),
+        max(40, int(hsv_cfg["s_min"]) // 2),
+        int(hsv_cfg["v_min"]),
+    )
+    hi = (int(hsv_cfg["h_max"]), 255, 255)
+    mask = cv2.inRange(hsv, np.array(lo), np.array(hi))
+    green = float(np.mean(mask)) / 255.0
+    gray = cv2.cvtColor(band, cv2.COLOR_BGR2GRAY)
+    dark = float(np.mean(gray < 85))
+    if dark >= 0.28 and green < 0.006:
+        return True
+    if (
+        bet_placed_green_header(slip_bgr, hsv_cfg)
+        or place_bet_button_metrics(slip_bgr, hsv_cfg).visible
+    ):
+        return False
+    if dark >= 0.22 and green < 0.006 and wager_modal_light_body_ratio(slip_bgr) >= 0.35:
+        return True
+    return False
+
+
+def centered_promo_popup_in_slip(
+    slip_bgr: np.ndarray,
+    hsv_cfg: dict,
+    *,
+    panel: float,
+) -> bool:
+    """Centered white promo (e.g. refer-a-friend) in the slip region — not a wager modal."""
+    if slip_bgr.size == 0:
+        return False
+    body = wager_modal_light_body_ratio(slip_bgr)
+    if panel > 0.28 or body < 0.88:
+        return False
+    return not wager_pick_visible_in_slip(slip_bgr, hsv_cfg)
+
+
+def bet_placed_post_submit_modal(
+    slip_bgr: np.ndarray,
+    hsv_cfg: dict,
+    *,
+    panel: float,
+    settled_history: bool = False,
+) -> bool:
+    """
+    Bet Placed confirmation when the slip crop omits the green title bar
+    (stake / to-return footer, no Place Bet or spinner on the action bar).
+    """
+    if slip_bgr.size == 0 or settled_history:
+        return False
+    if bet_placed_green_header(slip_bgr, hsv_cfg):
+        return True
+    if place_bet_button_metrics(slip_bgr, hsv_cfg).visible:
+        return False
+    if place_bet_modal_idle(slip_bgr, hsv_cfg, panel=panel, settled_history=False):
+        return False
+    if bet_slip_spinner_heuristic(
+        slip_bgr,
+        hsv_cfg,
+        panel=panel,
+        settled_history=False,
+        place_bet_visible=False,
+    ):
+        return False
+    body = wager_modal_light_body_ratio(slip_bgr)
+    if body < 0.35:
+        return False
+    if panel < 0.12:
+        return False
+    if centered_promo_popup_in_slip(slip_bgr, hsv_cfg, panel=panel):
+        return False
+    if non_wager_popup_in_slip(slip_bgr, hsv_cfg, panel=panel):
+        return False
+    if not wager_pick_visible_in_slip(slip_bgr, hsv_cfg):
+        return False
+    h = slip_bgr.shape[0]
+    foot = slip_bgr[int(h * 0.50) :, :]
+    if foot.size == 0:
+        return False
+    foot_light = float(np.mean(cv2.cvtColor(foot, cv2.COLOR_BGR2GRAY) > 95))
+    return foot_light >= 0.18
+
+
+def bet_placed_modal_detected(
+    slip_bgr: np.ndarray,
+    hsv_cfg: dict,
+    *,
+    panel: float,
+    settled_history: bool = False,
+) -> bool:
+    """True only for the Bet Placed confirmation popup (not pre-bet or spinner)."""
+    if slip_bgr.size == 0 or settled_history:
+        return False
+    if centered_promo_popup_in_slip(slip_bgr, hsv_cfg, panel=panel):
+        return False
+    if non_wager_popup_in_slip(slip_bgr, hsv_cfg, panel=panel):
+        return False
+    if bet_placed_green_header(slip_bgr, hsv_cfg):
+        return compact_wager_modal_heuristic(
+            slip_bgr, hsv_cfg, panel=panel, settled_history=False
+        )
+    if bet_placed_checkmark_in_header(slip_bgr, hsv_cfg):
+        return True
+    if bet_placed_post_submit_modal(slip_bgr, hsv_cfg, panel=panel, settled_history=False):
+        return True
+    if panel >= 0.88:
+        return False
+    return bet_placed_banner_heuristic(
+        slip_bgr, hsv_cfg, panel=panel, settled_history=False
+    )
+
+
 def bet_slip_spinner_heuristic(
     slip_bgr: np.ndarray,
     hsv_cfg: dict,
@@ -271,10 +473,13 @@ def bet_slip_spinner_heuristic(
     panel: float,
     settled_history: bool,
     place_bet_visible: bool,
-    max_white_on_green: float = 0.12,
+    max_white_on_green: float = 0.022,
 ) -> bool:
     """Green action bar with circular progress (no Place Bet label)."""
     if settled_history or place_bet_visible:
+        return False
+    wog = action_bar_white_on_green_ratio(slip_bgr, hsv_cfg)
+    if wog >= 0.022:
         return False
     if not compact_wager_modal_heuristic(
         slip_bgr, hsv_cfg, panel=panel, settled_history=False
@@ -283,7 +488,6 @@ def bet_slip_spinner_heuristic(
     btn = place_bet_button_metrics(slip_bgr, hsv_cfg)
     if not btn.visible:
         return False
-    wog = action_bar_white_on_green_ratio(slip_bgr, hsv_cfg)
     return wog <= max_white_on_green
 
 

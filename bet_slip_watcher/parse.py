@@ -287,14 +287,12 @@ def parse_slip_text(lines: list[str], place_bet_visible: bool) -> BetSlipReading
     )
     joined = "\n".join(lines)
 
-    if BET_PLACED.search(joined):
-        reading.bet_placed_confirmed = True
-        reading.place_bet_visible = False
-    elif BET_PLACED_LOOSE.search(joined):
-        reading.bet_placed_confirmed = True
-        reading.place_bet_visible = False
-    elif PLACE_BET.search(joined):
+    if PLACE_BET.search(joined):
         reading.place_bet_visible = True
+    if not reading.place_bet_visible and BET_PLACED.search(joined):
+        reading.bet_placed_confirmed = True
+    elif not reading.place_bet_visible and BET_PLACED_LOOSE.search(joined):
+        reading.bet_placed_confirmed = True
 
     ref = BET_REF.search(joined.replace(" ", ""))
     if not ref:
@@ -307,6 +305,8 @@ def parse_slip_text(lines: list[str], place_bet_visible: bool) -> BetSlipReading
         ref = BET_REF_ALT.search(joined.replace(" ", ""))
     if ref:
         reading.bet_ref = _normalize_bet_ref(ref.group(1))
+        reading.bet_placed_confirmed = True
+        reading.place_bet_visible = False
 
     if POINT_SPREAD.search(joined):
         reading.market_type = "Point Spread"
