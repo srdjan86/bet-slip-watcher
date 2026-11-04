@@ -1,0 +1,56 @@
+images:
+  bet/placed/000052_bet_placed_stake38500_ref-PP8490355211-22a4ba9e-139e-40d7-ba35-d8a624130610.png:
+  - bet_placed
+  bet/placed/000100_NOTIFY_bet_placed_stake0_ref-1Q9045954851-e86ceddf-6729-4928-8ab4-debec34167c5.jpg:
+  - bet_placed
+  bet/placed/000784_NOTIFY_bet_placed_stake0_ref-KQ4031022391-740df8f4-373c-4663-92f5-8c59746524c3.png:
+  - bet_placed
+  bet/placed/002699_bet_placed_stake38500_ref-TQ45891779611-b7aaf37f-c8c2-4cf8-a026-333d25003686.png:
+  - bet_placed
+  bet/placed/Screenshot_2026-10-31_at_10.03.14-cc4a0f30-72a8-4089-a910-7ed78b8de2d0.png:
+  - bet_placed
+  bet/placed/Screenshot_2026-11-01_at_15.41.55-26206660-eadb-43e2-a41a-76c39f940b1d.jpg:
+  - bet_placed
+  bet/placed/Screenshot_2026-11-01_at_21.41.25-72488de9-3d7b-4ddb-b952-afd2f45c32fd.jpg:
+  - bet_placed
+  bet/placing/007606_NOTIFY_bet_placing_stake0_ref-no-ref_crop-slip-f6f23d0a-aa1e-42ce-bdc7-baae88693254.png:
+  - bet_placing
+  bet/placing/016841_NOTIFY_bet_placing_stake0_ref-no-ref_crop-slip-e0e03158-3398-497b-b30b-e119c52e39a4.png:
+  - bet_placing
+  bet/placing/016915_NOTIFY_bet_placing_stake0_ref-no-ref_crop-slip-e88e3350-7c02-4ad6-9681-8fba919ef4f6.png:
+  - bet_placing
+  bet/placing/034211_NOTIFY_bet_placing_stake0_ref-no-ref_crop-slip-89c7d7b8-0cb0-4023-bdd6-4dd4c847a163.png:
+  - bet_placing
+  bet/placing/039512_NOTIFY_bet_placing_stake0_ref-no-ref_crop-slip-7252ec6b-c82b-451b-a134-a89a33021d6b.png:
+  - bet_placing
+  bet/placing/042969_NOTIFY_bet_placing_stake0_ref-no-ref_crop-slip-5d703e24-2bf9-4520-a390-7008b41b649a.png:
+  - bet_placing
+  bet/placing/050976_NOTIFY_bet_placing_stake0_ref-no-ref_crop-slip-066b1447-78e0-4eeb-b540-8616413b8647.png:
+  - bet_placing
+  no-bet/000039_not-placed_not-placing_not-ready_no-slip_stake21000_ref-no-ref-9651f49d-4bb6-4354-984b-d3a36dac45d8.png: []
+  no-bet/000050_NOTIFY_bet_placed_stake38500_ref-no-ref-c88a5b28-2ebd-4e4d-ae04-3bc9e945a1fa.jpg: []
+  no-bet/000072_bet-placed_not-placing_not-ready_slip-on-screen_stake0_ref-no-ref-f4d2c5a7-7684-48f3-8952-dccd2160281a.png: []
+  no-bet/000098_NOTIFY_bet_placed_stake0_ref-no-ref-d16666fc-ae47-4bbe-8fb5-2462d7b84adb.jpg: []
+  no-bet/000098_NOTIFY_bet_placed_stake38500_ref-no-ref-bb1943ed-9069-45e8-9092-fb9795f9b60f.jpg: []
+  no-bet/000098_NOTIFY_bet_placed_stake38500_ref-no-ref-f6b25a89-34df-428d-a1c8-187f744fcc88.jpg: []
+  no-bet/000525_bet_placed_OCR-EMPTY_stake0_ref-no-ref-199a086a-890f-4eb5-addb-966ca3ae99ae.png: []
+  no-bet/001406_bet_placed_stake0_ref-no-ref-d06c929f-7487-4cfc-8ddf-4eaf2baaf46f.png: []
+  no-bet/003494_NOTIFY_bet_placing_stake0_ref-no-ref-a70404cc-cc12-4f79-b22c-80a2c5e1570d.png: []
+  no-bet/008556_NOTIFY_bet_placed_stake0_ref-no-ref-da4c9143-8837-42e3-bd25-e6b350ae2068.png: []
+  no-bet/008556_NOTIFY_bet_placed_stake0_ref-no-ref-f3167c13-4f7c-45e3-a32e-9fe26dc168a7.png: []
+  no-bet/011304_NOTIFY_bet_placed_stake38500_ref-no-ref-a8bb204f-136c-4194-b122-96fbe096ed6c.png: []
+  no-bet/011333_NOTIFY_bet_placed_stake1000_ref-no-ref-25aa3a05-8d96-4bab-b3f5-e8774952ea4e.png: []
+  no-bet/047947_NOTIFY_bet_placing_stake0_ref-no-ref-49bfe8e5-5907-40a2-9b87-2ed3946ea362.png: []
+  no-bet/049047_NOTIFY_bet_placing_stake0_ref-no-ref-b1cd37f4-93be-4ef4-81ad-cf60a4ab8cbc.png: []
+  no-bet/050341_NOTIFY_bet_placing_stake0_ref-no-ref-09e7c03d-2891-40bc-84f5-3b699d8570cb.png: []
+  no-bet/051004_NOTIFY_bet_placed_stake20125_ref-no-ref-d343c6bd-523f-4b06-8c12-586e8e1fa835.png: []
+  no-bet/051004_NOTIFY_bet_placed_stake20125_ref-no-ref_crop-slip-c3ebf1c4-0854-4a0c-b9a7-b184d6af512f.png: []
+  no-bet/051011_NOTIFY_bet_placed_stake21000_ref-no-ref-3a4dd792-6520-4b78-a793-b13006fe25cd.png: []
+  no-bet/051011_NOTIFY_bet_placed_stake21000_ref-no-ref_crop-slip-2ea3d69e-97ca-4f00-8b26-033f7b4af01a.png: []
+  no-bet/084104_NOTIFY_bet_placing_stake0_ref-no-ref-8a57f386-72c9-46ce-9aa0-783ada9ea3f6.png: []
+  no-bet/084104_NOTIFY_bet_placing_stake0_ref-no-ref-e2f680e8-9f1e-495b-a343-c9536e337b8f.png: []
+  ? no-bet/NOTIFY-bet_placing_000011_not-placed_bet-placing_not-ready_slip-on-screen_stake0_ref-no-ref-c7d1b2dd-2317-42de-87c6-2bbc37372b0b.png
+  : []
+  no-bet/Screenshot_2026-11-01_at_21.43.25-cc728fac-37e6-4ddf-8efc-ed96e27e7ba3.jpg: []
+  no-bet/bet_placed-698b0ff8-be4b-4c15-94a5-cfa16e35edb8.png: []
+  no-bet/bet_placing-f61a2843-6a89-411b-b122-174865a544da.png: []

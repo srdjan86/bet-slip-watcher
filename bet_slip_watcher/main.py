@@ -33,6 +33,7 @@ from bet_slip_watcher.detect import (
     bet_settled_history_heuristic,
     compact_wager_modal_heuristic,
     non_wager_popup_in_slip,
+    sports_markets_page_in_slip,
     place_bet_modal_idle,
     wager_modal_light_body_ratio,
     fullpage_in_slip_crop_heuristic,
@@ -267,6 +268,7 @@ def probe_slip(frame, regions: RegionSet, hsv_cfg: dict) -> SlipProbe:
         bet_settled_history_heuristic(slip_crop, hsv_cfg, panel=panel)
         or fullpage_in_slip_crop_heuristic(slip_crop, hsv_cfg, panel=panel)
         or my_bets_list_in_slip_heuristic(slip_crop, hsv_cfg, panel=panel)
+        or sports_markets_page_in_slip(slip_crop, panel=panel, hsv_cfg=hsv_cfg)
     )
     placed_banner = (
         False
@@ -893,7 +895,19 @@ async def run_watcher(args: argparse.Namespace) -> None:
             panel=probe.panel,
             settled_history=probe.settled_history,
         )
-        if pre_bet_idle or awaiting_place_click:
+        markets_page = sports_markets_page_in_slip(
+            probe.slip_crop,
+            panel=probe.panel,
+            hsv_cfg=hsv_cfg,
+        )
+        if probe.settled_history or markets_page:
+            reading = replace(
+                reading,
+                place_bet_visible=False,
+                bet_placing_active=False,
+                bet_placed_confirmed=False,
+            )
+        elif pre_bet_idle or awaiting_place_click:
             reading = replace(
                 reading,
                 place_bet_visible=True,
@@ -908,6 +922,12 @@ async def run_watcher(args: argparse.Namespace) -> None:
             reading = replace(
                 reading,
                 place_bet_visible=False,
+                bet_placing_active=False,
+                bet_placed_confirmed=False,
+            )
+        elif not submit_started and not probe.placed_banner:
+            reading = replace(
+                reading,
                 bet_placing_active=False,
                 bet_placed_confirmed=False,
             )
@@ -1037,133 +1057,16 @@ async def run_watcher(args: argparse.Namespace) -> None:
 
 def check_image_path(image_path: Path, config_path: Path) -> int:
     """Run detection + notify gating on a screenshot; print verdict (exit 0 = no notify)."""
-    from bet_slip_watcher.state import StateMachine, worth_outcome_notify
+    from bet_slip_watcher.notify_eval import evaluate_notify_events
 
-    cfg = load_config(config_path)
-    regions = RegionSet.from_config(cfg)
-    hsv_cfg = cfg["place_bet_green_hsv"]
-    ocr_cfg = cfg.get("ocr", {})
-    frame = cv2.imread(str(image_path))
-    if frame is None:
+    try:
+        events = evaluate_notify_events(image_path, config_path)
+    except FileNotFoundError:
         print(f"ERROR: cannot read {image_path}")
         return 2
-    direct_slip = (
-        "crop-slip" in image_path.name.lower()
-        or max(frame.shape[:2]) < 900
-    )
-    if direct_slip:
-        slip = frame
-        panel = slip_panel_score(slip)
-        settled_history = (
-            bet_settled_history_heuristic(slip, hsv_cfg, panel=panel)
-            or fullpage_in_slip_crop_heuristic(slip, hsv_cfg, panel=panel)
-            or my_bets_list_in_slip_heuristic(slip, hsv_cfg, panel=panel)
-        )
-        green = place_bet_green_ratio(slip, hsv_cfg)
-        btn_green = place_bet_button_metrics(slip, hsv_cfg)
-        placed_banner = (
-            False
-            if settled_history
-            else bet_placed_modal_detected(
-                slip, hsv_cfg, panel=panel, settled_history=settled_history
-            )
-        )
-        probe = SlipProbe(
-            panel=panel,
-            green=green,
-            btn_green=btn_green,
-            placed_banner=placed_banner,
-            wager_ui=False,
-            settled_history=settled_history,
-            slip_crop=slip,
-        )
-    else:
-        probe = probe_slip(frame, regions, hsv_cfg)
-        slip = probe.slip_crop
-    promo = non_wager_popup_in_slip(slip, hsv_cfg, panel=probe.panel)
-    placed_vis = bet_placed_modal_detected(
-        slip, hsv_cfg, panel=probe.panel, settled_history=probe.settled_history
-    )
-    pre = place_bet_modal_idle(
-        slip, hsv_cfg, panel=probe.panel, settled_history=probe.settled_history
-    )
-    placing_vis = bet_placing_heuristic(
-        slip,
-        hsv_cfg,
-        probe.panel,
-        pre,
-        placed_vis,
-        None,
-        settled_history=probe.settled_history,
-    )
-    ocr = OcrEngine(
-        languages=ocr_cfg.get("languages", ["eng"]),
-        gpu=bool(ocr_cfg.get("gpu", False)),
-        scale=float(ocr_cfg.get("scale", 2.0)),
-    )
-    submit = (
-        not probe.settled_history
-        and not promo
-        and (
-            probe.placed_banner
-            or (
-                not pre
-                and probe.panel >= 0.45
-                and (
-                    probe.btn_green.visible
-                    or probe.green.visible
-                    or bet_placed_green_header(slip, hsv_cfg)
-                )
-            )
-        )
-    )
-    if direct_slip:
-        reading = BetSlipReading(slip_crop_score=probe.panel)
-        reading = _apply_probe_to_reading(probe, reading, hsv_cfg)
-        reading = _tag_wager_modal(reading, probe, hsv_cfg)
-        slip_visible = probe.panel > 0.25 and (
-            reading.bet_placed_confirmed or reading.bet_placing_active or placing_vis
-        )
-    else:
-        _, reading = analyze_frame(
-            frame, regions, ocr, hsv_cfg, ocr_cfg, run_ocr=submit, probe=probe
-        )
-        slip_visible = True
-    if pre:
-        reading = replace(
-            reading,
-            place_bet_visible=True,
-            bet_placing_active=False,
-            bet_placed_confirmed=False,
-        )
-    elif promo:
-        reading = replace(
-            reading,
-            bet_placing_active=False,
-            bet_placed_confirmed=False,
-        )
-    elif probe.placed_banner or placed_vis:
-        reading = replace(
-            reading,
-            bet_placed_confirmed=True,
-            place_bet_visible=False,
-            bet_placing_active=False,
-        )
-    events: list[tuple[str, object]] = []
-    if worth_outcome_notify(reading):
-        sm = StateMachine(placed_confirm_frames=1)
-        events = sm.observe(True, reading, reading.search_query, None)
     print(f"image: {image_path.name}")
-    print(
-        f"  settled={probe.settled_history} promo={promo} pre_bet={pre} "
-        f"placed_vis={placed_vis} placing_vis={placing_vis} probe_banner={probe.placed_banner}"
-    )
-    print(
-        f"  reading: placed={reading.bet_placed_confirmed} placing={reading.bet_placing_active} "
-        f"stake={reading.stake_rsd} ref={reading.bet_ref!r}"
-    )
     if events:
-        print(f"  NOTIFY: {[e[0] for e in events]}")
+        print(f"  NOTIFY: {events}")
         return 1
     print("  NOTIFY: (none) — not treated as a bet")
     return 0

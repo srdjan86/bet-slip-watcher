@@ -143,6 +143,27 @@ Everything else (open slip with Place Bet, homepage, My Bets, etc.) is ignored. 
 
 Or set `NTFY_TOPIC=my-secret-topic` and subscribe in the ntfy app.
 
+## Regression tests (review screenshots)
+
+Golden frames from stream review live under `tests/golden/`:
+
+- `no-bet/` — should **not** notify  
+- `bet/placing/` — should notify **bet_placing**  
+- `bet/placed/` — should notify **bet_placed**  
+
+Expected outcomes are in `tests/golden_manifest.yaml`. Pytest runs the real detection pipeline on each file; **folder names are for your review only** (a separate test fails if a file sits in the wrong folder).
+
+```bash
+pip install -r requirements-dev.txt
+pytest tests/test_golden_notify.py -q
+```
+
+Quick check on a single file (exit 0 = no notify, 1 = would notify):
+
+```bash
+python -m bet_slip_watcher.main --check-image tests/golden/SOME_FRAME.png
+```
+
 ## Project layout
 
 ```
@@ -155,8 +176,11 @@ bet_slip_watcher/
   parse.py         search / market row / RSD stake parsing
   state.py         slip_ready vs bet_likely_placed
   notify.py        Telegram + ntfy
+  notify_eval.py   offline notify gating (tests + --check-image)
   models.py        datatypes
 config.yaml        regions + HSV thresholds
+tests/golden/      review screenshot fixtures
+tests/golden_manifest.yaml
 ```
 
 ## Next phase (not implemented)

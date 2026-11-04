@@ -69,6 +69,29 @@ def action_bar_white_on_green_ratio(slip_bgr: np.ndarray, hsv_cfg: dict) -> floa
     return float(np.count_nonzero(white_on_green)) / float(green_px)
 
 
+def action_bar_bright_on_green_ratio(
+    slip_bgr: np.ndarray,
+    hsv_cfg: dict,
+    *,
+    gray_min: int = 175,
+) -> float:
+    """Bright pixels on the green action bar (spinner arc vs flat Place Bet fill)."""
+    bar = action_bar_crop(slip_bgr)
+    if bar.size == 0:
+        return 0.0
+    hsv = cv2.cvtColor(bar, cv2.COLOR_BGR2HSV)
+    lower = np.array(
+        [hsv_cfg["h_min"], hsv_cfg["s_min"], hsv_cfg["v_min"]], dtype=np.uint8
+    )
+    upper = np.array([hsv_cfg["h_max"], 255, 255], dtype=np.uint8)
+    green = cv2.inRange(hsv, lower, upper) > 0
+    if int(np.count_nonzero(green)) < 10:
+        return 0.0
+    gray = cv2.cvtColor(bar, cv2.COLOR_BGR2GRAY)
+    bright = gray >= gray_min
+    return float(np.count_nonzero(green & bright)) / float(np.count_nonzero(green))
+
+
 def place_bet_cta_visible(
     slip_bgr: np.ndarray,
     hsv_cfg: dict,
@@ -197,11 +220,32 @@ def bet_placed_green_header(slip_bgr: np.ndarray, hsv_cfg: dict) -> bool:
         return False
     row_max = max(float(np.mean(mask[r, :])) / 255.0 for r in range(mask.shape[0]))
     mean_green = float(np.mean(mask)) / 255.0
-    if row_max >= 0.28:
+    # Full green title bar (Bet Placed), not a single odds/spread text row on a dark page.
+    if row_max >= 0.28 and mean_green >= 0.055:
         return True
     if mean_green >= 0.12 and row_max >= 0.15:
         return True
     return False
+
+
+def sports_markets_page_in_slip(
+    slip_bgr: np.ndarray,
+    *,
+    panel: float,
+    hsv_cfg: dict,
+) -> bool:
+    """
+    bet365 coupon / league lines fill the slip crop (dark page, no bet modal).
+    """
+    if slip_bgr.size == 0 or panel < 0.82:
+        return False
+    if place_bet_button_metrics(slip_bgr, hsv_cfg).visible:
+        return False
+    if wager_modal_light_body_ratio(slip_bgr) >= 0.12:
+        return False
+    if bet_placed_green_header(slip_bgr, hsv_cfg):
+        return False
+    return True
 
 
 def place_bet_modal_idle(
@@ -226,8 +270,12 @@ def place_bet_modal_idle(
     if not btn.visible:
         return False
     wog = action_bar_white_on_green_ratio(slip_bgr, hsv_cfg)
+    bright = action_bar_bright_on_green_ratio(slip_bgr, hsv_cfg)
     # "Place Bet" label (dark text on green) — not the thin white spinner arc.
     if wog >= 0.022:
+        return True
+    # Flat green bar (stream blur): no bright spinner arc on the button.
+    if bright < 0.12:
         return True
     return False
 
@@ -259,7 +307,7 @@ def compact_wager_modal_heuristic(
     if panel < min_panel or panel > 0.93:
         return False
     if bet_placed_green_header(slip_bgr, hsv_cfg):
-        return True
+        return body >= 0.12
     if wager_modal_light_body_ratio(slip_bgr) >= 0.12:
         return True
     btn = place_bet_button_metrics(slip_bgr, hsv_cfg)
@@ -404,6 +452,8 @@ def bet_placed_post_submit_modal(
     """
     if slip_bgr.size == 0 or settled_history:
         return False
+    if sports_markets_page_in_slip(slip_bgr, panel=panel, hsv_cfg=hsv_cfg):
+        return False
     if bet_placed_green_header(slip_bgr, hsv_cfg):
         return True
     if place_bet_button_metrics(slip_bgr, hsv_cfg).visible:
@@ -447,11 +497,15 @@ def bet_placed_modal_detected(
     """True only for the Bet Placed confirmation popup (not pre-bet or spinner)."""
     if slip_bgr.size == 0 or settled_history:
         return False
+    if sports_markets_page_in_slip(slip_bgr, panel=panel, hsv_cfg=hsv_cfg):
+        return False
     if centered_promo_popup_in_slip(slip_bgr, hsv_cfg, panel=panel):
         return False
     if non_wager_popup_in_slip(slip_bgr, hsv_cfg, panel=panel):
         return False
     if bet_placed_green_header(slip_bgr, hsv_cfg):
+        if wager_modal_light_body_ratio(slip_bgr) < 0.12:
+            return False
         return compact_wager_modal_heuristic(
             slip_bgr, hsv_cfg, panel=panel, settled_history=False
         )
@@ -480,6 +534,9 @@ def bet_slip_spinner_heuristic(
         return False
     wog = action_bar_white_on_green_ratio(slip_bgr, hsv_cfg)
     if wog >= 0.022:
+        return False
+    bright = action_bar_bright_on_green_ratio(slip_bgr, hsv_cfg)
+    if bright < 0.12:
         return False
     if not compact_wager_modal_heuristic(
         slip_bgr, hsv_cfg, panel=panel, settled_history=False
@@ -549,7 +606,7 @@ def fullpage_in_slip_crop_heuristic(
     hsv_cfg: dict,
     *,
     panel: float,
-    min_panel: float = 0.94,
+    min_panel: float = 0.88,
 ) -> bool:
     """
     bet365 homepage / My Bets / search fills the slip crop (dark, no action bar).
@@ -574,6 +631,14 @@ def bet_settled_history_heuristic(
     My Bets (Open/Live/Settled) list in the slip crop — not Place Bet / Bet Placed popup.
     """
     if slip_bgr.size == 0:
+        return False
+    if panel < 0.75 and place_bet_button_metrics(slip_bgr, hsv_cfg).visible:
+        return False
+    if (
+        panel <= 0.93
+        and wager_modal_light_body_ratio(slip_bgr) >= 0.10
+        and not bet_placed_green_header(slip_bgr, hsv_cfg)
+    ):
         return False
     bands_strict = _count_green_stake_bands(slip_bgr, hsv_cfg, min_ratio=0.06)
     if bands_strict >= 3:
